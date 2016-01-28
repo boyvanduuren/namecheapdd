@@ -3,7 +3,7 @@ namecheap_updater
 
 A simple tool to update A records registered with namecheap, using [this][1] method.
 Configuration is done in a YAML file that has to be named `config.yaml` and exist
-in the same directory as the binary. An example config file is shipped as `config.yaml.example`.
+in the same directory as the binary. An example `config.yaml` can be found in this repo as well.
 
 Compile with `go build`.
 
