@@ -44,6 +44,10 @@ var config Config
 // The external IP address, usually retrieved from an external service.
 var externalIpAddress string
 
+// IsPrivateIP is used to check whether an IP address is
+// contained in an RFC1918 network.
+var isPrivateIP func(string) bool = createPrivateIpChecker()
+
 // The URL of Namecheap's update service.
 const namecheapUpdateUrl string = "https://dynamicdns.park-your-domain.com/update"
 
@@ -63,6 +67,34 @@ func checkNamecheapResponse(response []byte) error {
 	return ret
 }
 
+// Creates and returns a function that can check if an IP address is in RFC1918 range.
+func createPrivateIpChecker() func(string) bool {
+	var rfc1918Networks []net.IPNet
+	var rfc1918Addresses = map[string]int{
+		"10.0.0.0":    8,
+		"172.16.0.0":  12,
+		"192.168.0.0": 16,
+	}
+	cidrLength := 32
+
+	for ip, cidrMask := range rfc1918Addresses {
+		addr := net.ParseIP(ip)
+		mask := net.CIDRMask(cidrMask, cidrLength)
+
+		rfc1918Networks = append(rfc1918Networks, net.IPNet{IP: addr, Mask: mask})
+	}
+
+	return func(ip string) bool {
+		found := false
+		for _, network := range rfc1918Networks {
+			if network.Contains(net.ParseIP(ip)) {
+				found = true
+			}
+		}
+		return found
+	}
+}
+
 // Retrieve the external IP address from an external service. We assume that the service
 // returns an unformatted IP address after a GET.
 func getIp(url string) string {
@@ -75,7 +107,6 @@ func getIp(url string) string {
 	if err != nil {
 		log.Fatalf("error while reading response for external IP address.\n%v", err)
 	}
-	// todo: make sure ipAddress is external
 	if net.ParseIP(string(ipAddress)) != nil {
 		return string(ipAddress)
 	} else {
@@ -141,6 +172,11 @@ func updateDns(domain Domain) {
 	externalIpAddress = getIp(config.IpRetrievalUrl)
 	if externalIpAddress == "" {
 		log.Printf("error retrieving current external IP address.")
+		return
+	}
+	if isPrivateIP(externalIpAddress) {
+		log.Printf("error: retrieved IP address is private.")
+		return
 	}
 	log.Printf("found current IP address %s", externalIpAddress)
 
