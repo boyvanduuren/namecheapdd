@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v2"
 )
@@ -16,6 +17,7 @@ import (
 // Config represents the parsed config file.
 type Config struct {
 	Domains        map[string]Domain
+	IntervalTime   int    `yaml:"interval_time"`
 	IpRetrievalUrl string `yaml:"ip_retrieval_url"`
 }
 
@@ -25,6 +27,7 @@ type Domain struct {
 	Host     string
 	Domain   string
 	Password string
+	Ttl      int
 }
 
 // The NamecheapXmlResponse struct is used to unmarshall the XML response
@@ -134,11 +137,16 @@ func parseConfig(file []byte) Config {
 			log.Fatalf("missing host for %s.", name)
 		case domain.Password == "":
 			log.Fatalf("missing password for %s.", name)
+		case domain.Ttl == 0:
+			domain.Ttl = 60
 		}
 	}
 
 	if config.IpRetrievalUrl == "" {
 		config.IpRetrievalUrl = "https://dynamicdns.park-your-domain.com/getip"
+	}
+	if config.IntervalTime == 0 {
+		config.IntervalTime = 5
 	}
 
 	return config
@@ -165,18 +173,18 @@ func prepareUrl(domain Domain) string {
 // UpdateDns checks if our current external IP address differs from the
 // DNS entry of the given domain. If this is the case, we update the
 // domain to our current external IP address.
-func updateDns(domain Domain) {
+func updateDns(domain Domain) bool {
 	var changed bool
 	var fqdn string
 
 	externalIpAddress = getIp(config.IpRetrievalUrl)
 	if externalIpAddress == "" {
 		log.Printf("error retrieving current external IP address.")
-		return
+		return false
 	}
 	if isPrivateIP(externalIpAddress) {
 		log.Printf("error: retrieved IP address is private.")
-		return
+		return false
 	}
 	log.Printf("found current IP address %s", externalIpAddress)
 
@@ -188,7 +196,7 @@ func updateDns(domain Domain) {
 	domainIpAddresses, err := net.LookupHost(fqdn)
 	if err != nil {
 		log.Printf("error while querying current IP address.\n%v", err)
-		return
+		return false
 	}
 
 	if len(domainIpAddresses) > 1 || len(domainIpAddresses) < 1 {
@@ -202,7 +210,7 @@ func updateDns(domain Domain) {
 		res, err := http.Get(prepareUrl(domain))
 		if err != nil {
 			log.Printf("error while updating DNS.")
-			return
+			return false
 		}
 		response, err := ioutil.ReadAll(res.Body)
 		res.Body.Close()
@@ -210,11 +218,13 @@ func updateDns(domain Domain) {
 		err = checkNamecheapResponse(response)
 		if err != nil {
 			log.Printf("error while updating DNS.\n%v", err)
-			return
+			return false
 		}
 		log.Printf("successfully updated DNS.")
+		return true
 	} else {
 		log.Printf("DNS is already up to date.")
+		return false
 	}
 }
 
@@ -222,6 +232,7 @@ func main() {
 	var config Config
 	filename, _ := filepath.Abs("./config.yaml")
 	rawConfig, err := ioutil.ReadFile(filename)
+	lock := false
 
 	if err != nil {
 		log.Fatalf("error: %v", err)
@@ -229,7 +240,34 @@ func main() {
 
 	config = parseConfig(rawConfig)
 	for name, domain := range config.Domains {
-		log.Printf("checking if we need to update %s.", name)
-		updateDns(domain)
+		updateTicker := time.NewTicker(time.Minute * time.Duration(config.IntervalTime))
+		log.Printf("starting scheduled checks for %s.", name)
+		go func(name string, domain Domain) {
+			for _ = range updateTicker.C {
+				// wait till the lock is released
+				for lock {
+					time.Sleep(time.Second)
+				}
+				// acquire lock
+				lock = true
+				log.Printf("checking if we need to update %s.", name)
+				// run the update routine, which returns false if anything the domain
+				// was updated
+				updated := updateDns(domain)
+				// release lock
+				lock = false
+				// if the domain was updated we don't want to check again for the
+				// duration of the TTL
+				if updated {
+					// sleep for the duration of the domain's configured
+					// ttl, default is 60 minutes
+					time.Sleep(time.Minute * time.Duration(domain.Ttl))
+				}
+			}
+		}(name, domain)
+	}
+
+	for {
+		time.Sleep(time.Second * 5)
 	}
 }

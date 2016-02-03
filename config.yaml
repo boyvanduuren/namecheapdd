@@ -1,6 +1,9 @@
 # ip_retrieval_url is used to determine your external IP
 # if it isn't configured, we'll default to https://dynamicdns.park-your-domain.com/getip
 ip_retrieval_url: "http://ipecho.net/plain"
+# interval_time configures the period of time between checks, in minutes
+# not configuring the interval_time means the default of 5 minutes is used
+interval_time: 1
 # the domains key is required
 domains:
   # some name for you to identify the domain
@@ -9,9 +12,12 @@ domains:
     host: "@"
     domain: "example.com"
     password: "checknamecheapforyourpassword"
+    # ttl is used as a timeout after a domain is updated, in minutes
+    ttl: 30
   arbitrary_name2:
     # if you want to update a subdomain, use that for host
     # this configuration would update "subdomain.example.com"
     host: "subdomain"
     domain: "example.com"
     password: "foobar"
+    # no ttl means a default of 60 minutes
