@@ -7,4 +7,10 @@ in the same directory as the binary. An example `config.yaml` can be found in th
 
 Compile with `go build`.
 
+	Usage of ./namecheapdd:
+	  -config string
+	        the location of the configuration file (default "/etc/namecheapdd.yaml")
+	  -debug
+	        enable debug logging
+
 [1]: https://www.namecheap.com/support/knowledgebase/article.aspx/29/11/how-do-i-use-the-browser-to-dynamically-update-hosts-ip "Namecheap.com - How do I use the browser to dynamically update host's IP?"
