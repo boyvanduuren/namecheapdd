@@ -236,13 +236,15 @@ func updateDns(name string, domain Domain) bool {
 }
 
 func init() {
-	filename, _ := filepath.Abs("./config.yaml")
-	rawConfig, err := ioutil.ReadFile(filename)
 	lock = false
 
 	// define command line options
 	debug := flag.Bool("debug", false, "enable debug logging")
+	configFile := flag.String("config", "/etc/namecheapdd.yaml", "the location of the configuration file")
 	flag.Parse()
+
+	filename, _ := filepath.Abs(*configFile)
+	rawConfig, err := ioutil.ReadFile(filename)
 
 	if err != nil {
 		log.Fatalf("error: %v", err)
