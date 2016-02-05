@@ -1,4 +1,4 @@
-namecheap_updater
+namecheapdd
 =================
 
 A simple tool to update A records registered with namecheap, using [this][1] method.
