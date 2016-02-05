@@ -3,13 +3,15 @@ package main
 import (
 	"encoding/xml"
 	"errors"
+	"flag"
 	"io/ioutil"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
 	"time"
+
+	log "github.com/Sirupsen/logrus"
 
 	"gopkg.in/yaml.v2"
 )
@@ -44,12 +46,15 @@ type NamecheapXmlResponse struct {
 // The parsed configuration.
 var config Config
 
-// The external IP address, usually retrieved from an external service.
+// the external IP address, usually retrieved from an external service.
 var externalIpAddress string
 
 // IsPrivateIP is used to check whether an IP address is
 // contained in an RFC1918 network.
 var isPrivateIP func(string) bool = createPrivateIpChecker()
+
+// A shared lock between the updating goroutines.
+var lock bool
 
 // The URL of Namecheap's update service.
 const namecheapUpdateUrl string = "https://dynamicdns.park-your-domain.com/update"
@@ -61,7 +66,7 @@ func checkNamecheapResponse(response []byte) error {
 	res := NamecheapXmlResponse{}
 	err := xml.Unmarshal([]byte(response), &res)
 	if err != nil {
-		log.Printf("error while parsing namecheap response after update.\n%v", err)
+		log.Errorf("error while parsing namecheap response after update.\n%v", err)
 		ret = err
 	}
 	if res.ErrCount > 0 {
@@ -126,7 +131,7 @@ func parseConfig(file []byte) Config {
 	}
 
 	if config.Domains == nil {
-		log.Fatalf("missing \"domains\" key in config.yaml.")
+		log.Fatal("missing \"domains\" key in config.yaml.")
 	}
 
 	for name, domain := range config.Domains {
@@ -173,20 +178,21 @@ func prepareUrl(domain Domain) string {
 // UpdateDns checks if our current external IP address differs from the
 // DNS entry of the given domain. If this is the case, we update the
 // domain to our current external IP address.
-func updateDns(domain Domain) bool {
+func updateDns(name string, domain Domain) bool {
 	var changed bool
 	var fqdn string
 
+	log.Debugf("checking %s.", name)
 	externalIpAddress = getIp(config.IpRetrievalUrl)
 	if externalIpAddress == "" {
-		log.Printf("error retrieving current external IP address.")
+		log.Error("error while retrieving current external IP address.")
 		return false
 	}
 	if isPrivateIP(externalIpAddress) {
-		log.Printf("error: retrieved IP address is private.")
+		log.Error("retrieved IP address is private.")
 		return false
 	}
-	log.Printf("found current IP address %s", externalIpAddress)
+	log.Debugf("found current IP address %s", externalIpAddress)
 
 	if domain.Host == "@" {
 		fqdn = domain.Domain
@@ -195,7 +201,7 @@ func updateDns(domain Domain) bool {
 	}
 	domainIpAddresses, err := net.LookupHost(fqdn)
 	if err != nil {
-		log.Printf("error while querying current IP address.\n%v", err)
+		log.Errorf("error while querying current IP address.\n%v", err)
 		return false
 	}
 
@@ -204,12 +210,13 @@ func updateDns(domain Domain) bool {
 	} else {
 		changed = domainIpAddresses[0] != externalIpAddress
 	}
-	log.Printf("found domain IP address(es) %s", domainIpAddresses)
+	log.Debugf("found domain IP address(es) %s", domainIpAddresses)
+
 	if changed {
-		log.Printf("DNS needs an update.")
+		log.Infof("DNS for %s needs an update.", name)
 		res, err := http.Get(prepareUrl(domain))
 		if err != nil {
-			log.Printf("error while updating DNS.")
+			log.Error("error while updating DNS.")
 			return false
 		}
 		response, err := ioutil.ReadAll(res.Body)
@@ -217,31 +224,40 @@ func updateDns(domain Domain) bool {
 
 		err = checkNamecheapResponse(response)
 		if err != nil {
-			log.Printf("error while updating DNS.\n%v", err)
+			log.Errorf("error while updating DNS.\n%v", err)
 			return false
 		}
-		log.Printf("successfully updated DNS.")
+		log.Info("successfully updated DNS.")
 		return true
 	} else {
-		log.Printf("DNS is already up to date.")
+		log.Debug("DNS is already up to date.")
 		return false
 	}
 }
 
-func main() {
-	var config Config
+func init() {
 	filename, _ := filepath.Abs("./config.yaml")
 	rawConfig, err := ioutil.ReadFile(filename)
-	lock := false
+	lock = false
+
+	// define command line options
+	debug := flag.Bool("debug", false, "enable debug logging")
+	flag.Parse()
 
 	if err != nil {
 		log.Fatalf("error: %v", err)
 	}
+	if *debug {
+		log.SetLevel(log.DebugLevel)
+	}
 
 	config = parseConfig(rawConfig)
+}
+
+func main() {
 	for name, domain := range config.Domains {
 		updateTicker := time.NewTicker(time.Minute * time.Duration(config.IntervalTime))
-		log.Printf("starting scheduled checks for %s.", name)
+		log.Infof("starting scheduled checks for %s.", name)
 		go func(name string, domain Domain) {
 			for _ = range updateTicker.C {
 				// wait till the lock is released
@@ -250,10 +266,10 @@ func main() {
 				}
 				// acquire lock
 				lock = true
-				log.Printf("checking if we need to update %s.", name)
+				log.Debugf("checking if we need to update %s.", name)
 				// run the update routine, which returns false if anything the domain
 				// was updated
-				updated := updateDns(domain)
+				updated := updateDns(name, domain)
 				// release lock
 				lock = false
 				// if the domain was updated we don't want to check again for the
