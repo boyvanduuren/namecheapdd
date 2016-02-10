@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -105,20 +106,20 @@ func createPrivateIpChecker() func(string) bool {
 
 // Retrieve the external IP address from an external service. We assume that the service
 // returns an unformatted IP address after a GET.
-func getIp(url string) string {
+func getIp(url string) (string, error) {
 	res, err := http.Get(url)
 	if err != nil {
-		log.Fatalf("error while retrieving external IP address.\n%v", err)
+		return "", fmt.Errorf("error while retrieving external IP address.\n%v", err)
 	}
 	ipAddress, err := ioutil.ReadAll(res.Body)
 	res.Body.Close()
 	if err != nil {
-		log.Fatalf("error while reading response for external IP address.\n%v", err)
+		return "", fmt.Errorf("error while reading response for external IP address.\n%v", err)
 	}
 	if net.ParseIP(string(ipAddress)) != nil {
-		return string(ipAddress)
+		return string(ipAddress), nil
 	} else {
-		return ""
+		return "", fmt.Errorf("Couldn't parse external IP address. Does %s return an IP address?", url)
 	}
 }
 
@@ -183,9 +184,9 @@ func updateDns(name string, domain Domain) bool {
 	var fqdn string
 
 	log.Debugf("checking %s.", name)
-	externalIpAddress = getIp(config.IpRetrievalUrl)
-	if externalIpAddress == "" {
-		log.Error("error while retrieving current external IP address.")
+	externalIpAddress, err := getIp(config.IpRetrievalUrl)
+	if err != nil {
+		log.Error(err)
 		return false
 	}
 	if isPrivateIP(externalIpAddress) {
